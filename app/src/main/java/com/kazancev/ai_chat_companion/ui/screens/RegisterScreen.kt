@@ -135,6 +135,7 @@ fun RegisterScreen(navController: NavController, authViewModel: AuthViewModel) {
             TextButton(onClick = { navController.popBackStack() }) {
                 Text(tr("Уже есть аккаунт? Войти"), color = AppColors.blue, fontSize = 16.sp)
             }
+            ServerConnectionShortcut(expandOnError = authState.error?.contains("Neuro Server") == true)
         }
     }
 }

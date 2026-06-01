@@ -105,7 +105,9 @@ Update `PUBLIC_SERVER_URL` with the same LAN address. Set `LLM_BASE_URL` to your
 .\run_server.bat
 ```
 
-The script creates `server\.venv`, installs backend dependencies and starts the API on port `3510`.
+The script creates `server\.venv`, installs backend dependencies and starts the API on port `3510`. The console prints one or more LAN addresses under `Введите в приложении`.
+
+On the Android login screen, tap `Настроить подключение к ПК`, paste an address from the server console and tap `Проверить подключение`. The same setting remains available later under `Settings -> PC connection`.
 
 ### 4. Optional: install local image generation
 

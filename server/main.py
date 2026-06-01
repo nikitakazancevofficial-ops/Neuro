@@ -4,10 +4,12 @@ import codecs
 import hashlib
 import hmac
 import json
+import ipaddress
 import mimetypes
 import os
 import re
 import secrets
+import socket
 import sys
 import tempfile
 import time
@@ -27,7 +29,7 @@ from pydantic import BaseModel, Field
 
 for output_stream in (sys.stdout, sys.stderr):
     try:
-        output_stream.reconfigure(errors="backslashreplace")
+        output_stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     except (AttributeError, ValueError):
         pass
 
@@ -67,6 +69,47 @@ MAX_IMAGE_REVIEW_ATTEMPTS = int(os.getenv("MAX_IMAGE_REVIEW_ATTEMPTS", "3"))
 STREAM_PIPELINE_VERSION = "real-sse-v3"
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 600_000
+
+
+def detected_lan_ipv4_addresses() -> List[str]:
+    addresses: List[str] = []
+
+    try:
+        addresses.extend(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        pass
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
+            udp_socket.connect(("8.8.8.8", 80))
+            addresses.append(udp_socket.getsockname()[0])
+    except OSError:
+        pass
+
+    result: List[str] = []
+    for address in addresses:
+        try:
+            parsed = ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        if parsed.version != 4 or parsed.is_loopback or parsed.is_link_local:
+            continue
+        if address not in result:
+            result.append(address)
+    return result
+
+
+def phone_setup_urls() -> List[str]:
+    urls: List[str] = []
+    if "127.0.0.1" not in PUBLIC_SERVER_URL and "localhost" not in PUBLIC_SERVER_URL:
+        urls.append(PUBLIC_SERVER_URL)
+    for address in detected_lan_ipv4_addresses():
+        candidate = f"http://{address}:{SERVER_PORT}"
+        if candidate not in urls:
+            urls.append(candidate)
+    return urls
+
+
 SYSTEM_PROMPT = (
     "Ты Neuro, русскоязычный AI-помощник. Всегда отвечай только на русском языке, "
     "ясно, полезно и по делу. Учитывай всю историю текущего чата и не теряй контекст "
@@ -2807,6 +2850,7 @@ async def root():
         "status": "ok",
         "message": "Neuro Local Server is running",
         "phone_url": PUBLIC_SERVER_URL,
+        "phone_setup_urls": phone_setup_urls(),
     }
 
 
@@ -2817,6 +2861,7 @@ async def config():
         "llm_base_url": LLM_BASE_URL,
         "context_tokens": CONTEXT_TOKENS,
         "server_port": SERVER_PORT,
+        "phone_setup_urls": phone_setup_urls(),
     }
 
 
@@ -2828,5 +2873,14 @@ if __name__ == "__main__":
     print(f"API:    {LLM_BASE_URL}")
     print(f"Ctx:    {CONTEXT_TOKENS} tokens")
     print(f"Uploads: {UPLOAD_DIR}")
+    print("-" * 56)
+    print("Введите в приложении: Настройки -> Подключение к ПК")
+    phone_urls = phone_setup_urls()
+    if phone_urls:
+        for phone_url in phone_urls:
+            print(f"  {phone_url}")
+    else:
+        print(f"  http://<IP вашего ПК>:{SERVER_PORT}")
+        print("  IP можно посмотреть командой: ipconfig")
     print("=" * 56)
     uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)

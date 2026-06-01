@@ -109,6 +109,7 @@ fun LoginScreen(navController: NavController, authViewModel: AuthViewModel) {
             TextButton(onClick = { navController.navigate("register") }) {
                 Text(tr("Нет аккаунта? Создать"), color = AppColors.blue, fontSize = 16.sp)
             }
+            ServerConnectionShortcut(expandOnError = authState.error?.contains("Neuro Server") == true)
         }
     }
 }

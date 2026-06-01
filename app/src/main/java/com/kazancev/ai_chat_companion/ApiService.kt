@@ -60,6 +60,7 @@ private val AI_MODE_KEY = stringPreferencesKey("ai_mode")
 private val THINKING_EFFORT_KEY = stringPreferencesKey("thinking_effort")
 private val STANDARD_MODEL_KEY = stringPreferencesKey("standard_model")
 private val AUTO_SWITCH_THINKING_KEY = booleanPreferencesKey("auto_switch_to_thinking")
+private val SERVER_URL_KEY = stringPreferencesKey("server_url")
 
 private data class AiRoute(
     val model: String,
@@ -154,6 +155,25 @@ class ApiService(private val context: Context) {
 
     suspend fun updateAutoSwitchToThinking(enabled: Boolean) {
         context.dataStore.edit { preferences -> preferences[AUTO_SWITCH_THINKING_KEY] = enabled }
+    }
+
+    suspend fun getConfiguredServerUrl(): String {
+        return context.dataStore.data.map { preferences ->
+            preferences[SERVER_URL_KEY] ?: BuildConfig.NEURO_SERVER_URL
+        }.first()
+    }
+
+    suspend fun checkAndSaveServerUrl(value: String): Result<String> {
+        return runCatching {
+            val normalized = normalizeServerUrl(value)
+            val response = client.get("$normalized/health")
+            if (!response.status.isSuccess()) {
+                error("Сервер ответил HTTP ${response.status.value}")
+            }
+            context.dataStore.edit { preferences -> preferences[SERVER_URL_KEY] = normalized }
+            activeServerUrl = normalized
+            normalized
+        }
     }
 
     suspend fun createChat(): Result<ChatInfo> {
@@ -251,7 +271,7 @@ class ApiService(private val context: Context) {
             emit(
                 StreamedAiResponse(
                     type = "error",
-                    error = "Cannot connect to server. Tried: ${serverCandidates.joinToString()}. Last error: ${lastError?.message}"
+                    error = connectionError(lastError)
                 )
             )
         }.catch { e ->
@@ -477,8 +497,9 @@ class ApiService(private val context: Context) {
         }.getOrNull()
     }
 
-    private fun orderedServerCandidates(): List<String> {
-        return listOf(activeServerUrl) + serverCandidates.filter { it != activeServerUrl }
+    private suspend fun orderedServerCandidates(): List<String> {
+        val configuredServerUrl = getConfiguredServerUrl()
+        return listOf(activeServerUrl, configuredServerUrl, *serverCandidates.toTypedArray()).distinct()
     }
 
     private suspend fun <T> runRequest(block: suspend (String) -> T): Result<T> {
@@ -497,8 +518,28 @@ class ApiService(private val context: Context) {
 
         return Result.failure(
             IllegalStateException(
-                "Cannot connect to server. Tried: ${serverCandidates.joinToString()}. Last error: ${lastError?.message}"
+                connectionError(lastError)
             )
         )
+    }
+
+    private fun normalizeServerUrl(value: String): String {
+        val clean = value.trim().trimEnd('/')
+        require(clean.isNotBlank()) { "Введите адрес сервера из консоли" }
+        val withScheme = if ("://" in clean) clean else "http://$clean"
+        require(withScheme.startsWith("http://") || withScheme.startsWith("https://")) {
+            "Адрес должен начинаться с http:// или https://"
+        }
+        return withScheme
+    }
+
+    private fun connectionError(lastError: Throwable?): String {
+        return buildString {
+            append("Не удалось подключиться к Neuro Server. ")
+            append("Проверьте, что ПК и телефон находятся в одной сети и сервер запущен. ")
+            append("Откройте консоль run_server.bat, скопируйте адрес из блока «Введите в приложении» ")
+            append("и укажите его в настройке «Подключение к ПК».")
+            lastError?.message?.takeIf { it.isNotBlank() }?.let { append("\n\nПоследняя ошибка: $it") }
+        }
     }
 }

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ColorLens
+import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
@@ -103,6 +104,7 @@ private enum class SettingsPage {
     Memory,
     SavedMemory,
     Language,
+    Connection,
     Integrations
 }
 
@@ -133,6 +135,7 @@ fun SettingsSheet(onDismiss: () -> Unit) {
             )
             SettingsPage.SavedMemory -> SavedMemoryPage(onBack = { page = SettingsPage.Memory })
             SettingsPage.Language -> LanguagePage(onBack = { page = SettingsPage.Main })
+            SettingsPage.Connection -> ConnectionPage(onBack = { page = SettingsPage.Main })
             SettingsPage.Integrations -> IntegrationsPage(onBack = { page = SettingsPage.Main })
         }
     }
@@ -225,12 +228,10 @@ private fun MainSettingsPage(
 
             SettingsSection("Локальный AI") {
                 SettingsRow(
-                    icon = Icons.Outlined.Memory,
-                    title = "Локальное выполнение",
-                    subtitle = "LM Studio и генерация работают на вашем ПК",
-                    value = "Включено",
-                    showChevron = false
-                ) { showPlaceholder("Локальное выполнение") }
+                    icon = Icons.Outlined.Computer,
+                    title = "Подключение к ПК",
+                    subtitle = "Адрес локального Neuro Server"
+                ) { onOpen(SettingsPage.Connection) }
                 SettingsDivider()
                 SettingsRow(
                     icon = Icons.Outlined.Security,
@@ -283,6 +284,14 @@ private fun MainSettingsPage(
         }
 
         CloseButton(onDismiss, Modifier.align(Alignment.TopEnd).padding(top = 18.dp, end = 18.dp))
+    }
+}
+
+@Composable
+private fun ConnectionPage(onBack: () -> Unit) {
+    SettingsSubPage(title = "Подключение к ПК", onBack = onBack) {
+        HintText("Запустите run_server.bat на ПК. Скопируйте адрес из блока «Введите в приложении» и проверьте подключение.")
+        ServerConnectionPanel()
     }
 }
 
