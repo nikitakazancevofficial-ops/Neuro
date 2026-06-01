@@ -102,10 +102,10 @@ Update `PUBLIC_SERVER_URL` with the same LAN address. Set `LLM_BASE_URL` to your
 ### 3. Start the chat backend
 
 ```powershell
-.\run_server.bat
+.\start_neuro.bat
 ```
 
-The script creates `server\.venv`, installs backend dependencies and starts the API on port `3510`. The console prints one or more LAN addresses under `Введите в приложении`.
+The launcher creates `server\.venv`, installs backend dependencies and starts the API on port `3510`. If FLUX.2 Klein is already installed, it also starts local image generation automatically. The console prints one or more LAN addresses under `Введите в приложении`.
 
 On the Android login screen, tap `Настроить подключение к ПК`, paste an address from the server console and tap `Проверить подключение`. The same setting remains available later under `Settings -> PC connection`.
 
@@ -113,7 +113,7 @@ On the Android login screen, tap `Настроить подключение к �
 
 ```powershell
 .\setup_flux_klein.bat
-.\run_neuro_with_images.bat
+.\start_neuro.bat
 ```
 
 This creates a separate image environment, downloads FLUX.2 Klein and starts both backend services.
