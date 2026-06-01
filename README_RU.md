@@ -14,10 +14,23 @@
 
 Neuro - активно развивающийся offline-first AI-помощник и портфолио-проект. Приложение объединяет нативный Android-интерфейс, локальные языковые модели, постоянную память, анализ изображений, локальную генерацию картинок и распознавание голоса. Сейчас это ранняя стадия проекта, но основа уже работает и быстро развивается.
 
-## Скриншот
+## Скриншоты
 
 <p align="center">
-  <img src="docs/screenshots/neuro-chat.png" alt="Экран чата Neuro" width="280" />
+  <img src="docs/screenshots/neuro-drawer.jpg" alt="Боковое меню Neuro" width="22%" />
+  <img src="docs/screenshots/neuro-empty-chat.jpg" alt="Экран чата Neuro" width="22%" />
+  <img src="docs/screenshots/neuro-models.jpg" alt="Выбор локальной модели Neuro" width="22%" />
+  <img src="docs/screenshots/neuro-image-editing.jpg" alt="Результат локальной обработки изображения в Neuro" width="22%" />
+</p>
+
+<p align="center">
+  <em>Навигация, локальный чат, выбор моделей и обработка изображений прямо внутри диалога.</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/neuro-settings.jpg" alt="Настройки Neuro" width="28%" />
+  <img src="docs/screenshots/neuro-personalization.jpg" alt="Персонализация Neuro" width="28%" />
+  <img src="docs/screenshots/neuro-memory.jpg" alt="Настройки памяти Neuro" width="28%" />
 </p>
 
 ## Возможности

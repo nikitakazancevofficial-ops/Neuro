@@ -14,10 +14,23 @@
 
 Neuro is an actively developed offline-first AI assistant and portfolio project. It combines a native Android interface with local language models, persistent memory, image understanding, local image generation and voice transcription. The project is in its early stages, but the foundation is already usable and growing quickly.
 
-## Screenshot
+## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/neuro-chat.png" alt="Neuro chat screen" width="280" />
+  <img src="docs/screenshots/neuro-drawer.jpg" alt="Neuro navigation drawer" width="22%" />
+  <img src="docs/screenshots/neuro-empty-chat.jpg" alt="Neuro chat screen" width="22%" />
+  <img src="docs/screenshots/neuro-models.jpg" alt="Neuro local model selector" width="22%" />
+  <img src="docs/screenshots/neuro-image-editing.jpg" alt="Neuro local image editing result" width="22%" />
+</p>
+
+<p align="center">
+  <em>Navigation, local chat, model routing and image editing directly inside the conversation.</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/neuro-settings.jpg" alt="Neuro settings" width="28%" />
+  <img src="docs/screenshots/neuro-personalization.jpg" alt="Neuro personalization" width="28%" />
+  <img src="docs/screenshots/neuro-memory.jpg" alt="Neuro memory settings" width="28%" />
 </p>
 
 ## Why Neuro
