@@ -1,0 +1,39 @@
+# Android and Gradle
+*.iml
+.gradle/
+.kotlin/
+.idea/
+local.properties
+run_server.local.bat
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+# Python
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+server/.venv/
+server/.image_venv/
+
+# Local Neuro state and generated assets
+server/storage*.json
+server/uploads/
+server/generated/
+server/models/
+server/.cache/
+server/flux_klein_model_info.json
+
+# Local screenshots and OS files
+/*.png
+.DS_Store
+Thumbs.db
+
+# Local environment files
+.env
+.env.*
+!.env.example

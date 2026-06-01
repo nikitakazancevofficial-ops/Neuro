@@ -1,0 +1,5 @@
+# Copy this file to local.properties and point Android Studio to your SDK.
+sdk.dir=C\:\\Users\\YOUR_NAME\\AppData\\Local\\Android\\Sdk
+
+# Use your PC LAN address when installing Neuro on a physical phone.
+neuro.serverUrl=http://192.168.1.10:3510
