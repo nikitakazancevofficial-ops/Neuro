@@ -1,6 +1,10 @@
 # Neuro
 
 <p align="center">
+  <strong>English</strong> | <a href="README_RU.md">Русский</a>
+</p>
+
+<p align="center">
   <img src="app/src/main/res/drawable/neuro_logo.png" alt="Neuro logo" width="112" />
 </p>
 
@@ -9,6 +13,8 @@
 </p>
 
 Neuro is an actively developed offline-first AI assistant and portfolio project. It combines a native Android interface with local language models, persistent memory, image understanding, local image generation and voice transcription. The project is in its early stages, but the foundation is already usable and growing quickly.
+
+## Screenshot
 
 <p align="center">
   <img src="docs/screenshots/neuro-chat.png" alt="Neuro chat screen" width="280" />
