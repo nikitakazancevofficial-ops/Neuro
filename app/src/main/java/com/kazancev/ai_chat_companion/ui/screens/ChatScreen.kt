@@ -146,6 +146,7 @@ import com.kazancev.ai_chat_companion.ChatMessage
 import com.kazancev.ai_chat_companion.ChatSearchResult
 import com.kazancev.ai_chat_companion.ChatViewModel
 import com.kazancev.ai_chat_companion.ImageGenerationInfo
+import com.kazancev.ai_chat_companion.MusicJob
 import com.kazancev.ai_chat_companion.MODEL_GEMMA_INSTANT
 import com.kazancev.ai_chat_companion.MODEL_GEMMA_STANDARD
 import com.kazancev.ai_chat_companion.MODEL_GLM_STANDARD
@@ -221,7 +222,8 @@ fun ChatScreen(
     viewModel: ChatViewModel,
     chatId: Int? = null,
     onOpenChat: (Int) -> Unit = {},
-    onNewChat: () -> Unit = {}
+    onNewChat: () -> Unit = {},
+    onOpenMusic: () -> Unit = {}
 ) {
     val messages by viewModel.messages.collectAsState()
     val chats by viewModel.chats.collectAsState()
@@ -459,6 +461,10 @@ fun ChatScreen(
                     scope.launch { drawerState.close() }
                     onNewChat()
                 },
+                onOpenMusic = {
+                    scope.launch { drawerState.close() }
+                    onOpenMusic()
+                },
                 onOpenSettings = {
                     reopenDrawerAfterSettings = true
                     scope.launch { drawerState.close() }
@@ -528,7 +534,8 @@ fun ChatScreen(
                             onRegenerate = { viewModel.regenerateLastResponse() },
                             onOpenImage = { uri, generated ->
                                 fullscreenImage = FullscreenImage(uri, generated)
-                            }
+                            },
+                            onOpenMusic = onOpenMusic
                         )
                     }
                     item(key = "bottom-anchor") {
@@ -1241,12 +1248,13 @@ private fun MessageRow(
     message: ChatMessage,
     shareUrl: String?,
     onRegenerate: () -> Unit,
-    onOpenImage: (String, Boolean) -> Unit
+    onOpenImage: (String, Boolean) -> Unit,
+    onOpenMusic: () -> Unit
 ) {
     if (message.author == Author.USER) {
         UserMessage(message, onOpenImage)
     } else {
-        AssistantMessage(message, shareUrl, onRegenerate, onOpenImage)
+        AssistantMessage(message, shareUrl, onRegenerate, onOpenImage, onOpenMusic)
     }
 }
 
@@ -1294,10 +1302,15 @@ private fun AssistantMessage(
     message: ChatMessage,
     shareUrl: String?,
     onRegenerate: () -> Unit,
-    onOpenImage: (String, Boolean) -> Unit
+    onOpenImage: (String, Boolean) -> Unit,
+    onOpenMusic: () -> Unit
 ) {
     message.imageGeneration?.let { imageGeneration ->
         ImageGenerationMessage(imageGeneration, onOpenImage)
+        return
+    }
+    message.musicGeneration?.let { musicGeneration ->
+        MusicGenerationMessage(musicGeneration, onOpenMusic)
         return
     }
 
@@ -1326,6 +1339,48 @@ private fun AssistantMessage(
             } else {
                 MessageActions(text = message.text, shareUrl = shareUrl, onRegenerate = onRegenerate)
             }
+        }
+    }
+}
+
+@Composable
+private fun MusicGenerationMessage(job: MusicJob, onOpenMusic: () -> Unit) {
+    val completed = job.status == "completed"
+    val failed = job.status == "failed"
+    Surface(color = AppColors.softSurface, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(color = AppColors.accent, shape = CircleShape, modifier = Modifier.size(48.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(NeuroIcons.Music, contentDescription = null, tint = Color.White, modifier = Modifier.size(27.dp))
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(job.title ?: tr("Новый трек"), color = AppColors.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        tr(
+                            when {
+                                completed -> "Трек готов и сохранён в AI Music"
+                                failed -> "Не удалось создать трек"
+                                job.stage == "checking_worker" -> "Проверяем музыкальный движок"
+                                job.stage == "aligning_lyrics" -> "Синхронизируем текст с вокалом"
+                                job.stage == "creating_cover" -> "Создаём обложку для трека"
+                                job.stage == "generating" -> "Генерируем музыку локально"
+                                else -> "Neuro пишет текст и продумывает стиль"
+                            }
+                        ),
+                        color = if (failed) AppColors.danger else AppColors.subtleText,
+                        fontSize = 14.sp
+                    )
+                }
+                if (!completed && !failed) CircularProgressIndicator(color = AppColors.accent, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+            }
+            if (completed) {
+                Surface(onClick = onOpenMusic, color = AppColors.accent, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+                    Text(tr("Открыть в AI Music"), color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+                }
+            }
+            if (failed && !job.error.isNullOrBlank()) Text(job.error, color = AppColors.danger, fontSize = 13.sp)
         }
     }
 }
@@ -2856,6 +2911,7 @@ private fun ChatDrawer(
     onCloseSearch: () -> Unit,
     onOpenChat: (Int) -> Unit,
     onNewChat: () -> Unit,
+    onOpenMusic: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val context = LocalContext.current
@@ -2895,6 +2951,7 @@ private fun ChatDrawer(
                     }
                     item { Spacer(modifier = Modifier.height(16.dp)) }
                     item { DrawerAction(NeuroIcons.Image, "Изображения") { context.toast("Изображения") } }
+                    item { DrawerAction(NeuroIcons.Music, "AI Music", onOpenMusic) }
                     item { DrawerAction(NeuroIcons.AgentCore, "AI Agent") { context.toast("AI Agent") } }
                     item { DrawerAction(NeuroIcons.Library, "Библиотека") { context.toast("Библиотека") } }
                     item { DrawerAction(NeuroIcons.Memory, "Локальная память") { context.toast("Локальная память") } }

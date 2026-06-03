@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -18,13 +19,25 @@ from contextlib import asynccontextmanager
 from html import escape
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+from music_service import (
+    MUSIC_WORKER_URL,
+    SUPPORTED_AUDIO_EXTENSIONS,
+    MusicGenerationRequest,
+    MusicService,
+    align_lyrics_timeline,
+    current_lyrics_line,
+    is_music_generation_request,
+    parse_music_plan,
+)
 
 
 for output_stream in (sys.stdout, sys.stderr):
@@ -64,7 +77,10 @@ WHISPER_MODEL = os.getenv(
 )
 IMAGE_WORKER_URL = os.getenv("IMAGE_WORKER_URL", "http://127.0.0.1:3511").rstrip("/")
 PUBLIC_SERVER_URL = os.getenv("PUBLIC_SERVER_URL", f"http://127.0.0.1:{SERVER_PORT}").rstrip("/")
-UNLOAD_LLM_BEFORE_FLUX = os.getenv("UNLOAD_LLM_BEFORE_FLUX", "1") == "1"
+UNLOAD_LLM_BEFORE_HEAVY_WORKER = os.getenv(
+    "UNLOAD_LLM_BEFORE_HEAVY_WORKER",
+    os.getenv("UNLOAD_LLM_BEFORE_FLUX", "1"),
+) == "1"
 MAX_IMAGE_REVIEW_ATTEMPTS = int(os.getenv("MAX_IMAGE_REVIEW_ATTEMPTS", "3"))
 STREAM_PIPELINE_VERSION = "real-sse-v3"
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
@@ -125,6 +141,13 @@ SYSTEM_PROMPT += (
     "Если пользователь просит изменить уже созданное изображение, воспринимай это как запрос на новую "
     "генерацию с сохранением прошлого сюжета и применением новых пожеланий."
 )
+SYSTEM_PROMPT += (
+    "\n\nВАЖНО: у тебя также есть встроенный локальный генератор музыки ACE-Step 1.5. "
+    "Ты умеешь создавать полноценные песни и инструментальные треки прямо в чате, а также "
+    "готовить cover-версии из загруженного аудио. Когда пользователь просит сгенерировать музыку, "
+    "сервер сам составляет подробное англоязычное описание стиля, структурированный текст песни "
+    "и метаданные, затем запускает локальную модель. Не говори, что не умеешь создавать музыку."
+)
 IMAGE_PROMPT_SUFFIX = (
     "Ответь только на русском языке. Пользователь прикрепил изображение: внимательно "
     "проанализируй именно картинку и опиши, что на ней видно. Не отвечай общими словами."
@@ -138,6 +161,8 @@ UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 GENERATED_DIR = Path(__file__).parent / "generated"
 GENERATED_DIR.mkdir(exist_ok=True)
+MUSIC_PLANNER_MODEL = os.getenv("MUSIC_PLANNER_MODEL", MODEL_QWEN_STANDARD)
+MUSIC_PLANNER_TIMEOUT_SECONDS = max(15.0, float(os.getenv("MUSIC_PLANNER_TIMEOUT_SECONDS", "90")))
 IMAGE_REQUEST_RE = re.compile(
     r"(?:сгенерир|создай|создать|нарисуй|нарисовать|сделай|сделать|generate|create|draw|make)"
     r"[\s\S]{0,90}(?:фото|изображен|картин|арт|image|photo|picture)"
@@ -199,10 +224,13 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Neuro Local Server", lifespan=lifespan)
 state_lock = asyncio.Lock()
+image_worker_request_lock = asyncio.Lock()
 
 # Монтируем статику для загруженных файлов
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 app.mount("/generated", StaticFiles(directory=str(GENERATED_DIR)), name="generated")
+music_service = MusicService(Path(__file__).parent, PUBLIC_SERVER_URL, MUSIC_WORKER_URL)
+app.mount("/music/uploads", StaticFiles(directory=str(music_service.upload_dir)), name="music_uploads")
 
 
 class LoginRequest(BaseModel):
@@ -255,6 +283,7 @@ class ServerMessage(BaseModel):
     content: str
     images: List[str] = Field(default_factory=list)
     image_generation: Optional[Dict[str, Any]] = None
+    music_generation: Optional[Dict[str, Any]] = None
 
 
 class UploadResponse(BaseModel):
@@ -471,6 +500,8 @@ state = load_state()
 whisper_lock = asyncio.Lock()
 whisper_model: Optional[Any] = None
 whisper_runtime: Optional[Dict[str, str]] = None
+music_whisper_lock = asyncio.Lock()
+music_whisper_model: Optional[Any] = None
 image_job_tasks: Dict[str, asyncio.Task[Any]] = {}
 
 
@@ -569,6 +600,53 @@ def transcribe_audio_sync(model: Any, audio_path: str) -> Dict[str, str]:
     return {"text": " ".join(text.split()), "language": info.language or "ru"}
 
 
+def load_music_whisper_model_sync():
+    from faster_whisper import WhisperModel
+
+    print(f"[music-whisper] loading model={WHISPER_MODEL} device=cpu compute_type=int8")
+    model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+    print(f"[music-whisper] ready model={WHISPER_MODEL} device=cpu compute_type=int8")
+    return model
+
+
+async def get_music_whisper_model():
+    global music_whisper_model
+    if music_whisper_model is not None:
+        return music_whisper_model
+    async with music_whisper_lock:
+        if music_whisper_model is None:
+            music_whisper_model = await asyncio.to_thread(load_music_whisper_model_sync)
+        return music_whisper_model
+
+
+def transcribe_music_words_sync(model: Any, audio_path: str, language: str) -> List[Dict[str, Any]]:
+    supported_language = str(language or "").strip().lower().split("-", 1)[0] or None
+    segments, _ = model.transcribe(
+        audio_path,
+        language=supported_language,
+        task="transcribe",
+        beam_size=3,
+        vad_filter=True,
+        word_timestamps=True,
+    )
+    words: List[Dict[str, Any]] = []
+    for segment in segments:
+        for word in segment.words or []:
+            words.append({"text": word.word, "start": word.start, "end": word.end})
+    return words
+
+
+async def align_music_lyrics(audio_path: str, lyrics: str, duration: float, language: str) -> List[Dict[str, Any]]:
+    if not lyrics.strip() or lyrics.strip().casefold() == "[instrumental]":
+        return []
+    model = await get_music_whisper_model()
+    words = await asyncio.to_thread(transcribe_music_words_sync, model, audio_path, language)
+    return align_lyrics_timeline(lyrics, duration, words)
+
+
+music_service.timeline_aligner = align_music_lyrics
+
+
 def chat_key(chat_id: int) -> str:
     return str(chat_id)
 
@@ -615,6 +693,19 @@ async def append_image_job_message(chat_id: int, job_id: str) -> None:
                 "content": "",
                 "images": [],
                 "image_job_id": job_id,
+            }
+        )
+        save_state()
+
+
+async def append_music_job_message(chat_id: int, job_id: str) -> None:
+    async with state_lock:
+        state["messages"].setdefault(chat_key(chat_id), []).append(
+            {
+                "role": "assistant",
+                "content": "",
+                "images": [],
+                "music_job_id": job_id,
             }
         )
         save_state()
@@ -1451,6 +1542,61 @@ async def complete_llm(history: List[Dict[str, Any]], model: str) -> str:
     raise HTTPException(status_code=502, detail=f"All fallback models failed. Last error: {last_error}")
 
 
+async def plan_music_generation(
+    user_prompt: str,
+    response_language: str = "ru",
+    task_type: str = "text2music",
+    instrumental: bool = False,
+) -> Dict[str, Any]:
+    """Ask the local chat model for a Suno-style blueprint before ACE-Step synthesis."""
+
+    history = [
+        {
+            "role": "system",
+            "content": (
+                "You are the music planning stage for a local ACE-Step 1.5 generator. "
+                "Return exactly one JSON object without markdown. Create a detailed English caption "
+                "for the musical style, arrangement, mood, vocal character and production. Write a "
+                "complete, coherent and rhymed song lyric with explicit section tags such as "
+                "[Verse 1], [Chorus], [Verse 2], [Bridge], [Final Chorus]. Respect the user's desired "
+                "theme and language. Do not imitate a living artist or reuse copyrighted lyrics. "
+                "Choose a natural song duration in seconds from 10 to 600 based on the requested "
+                "song and the lyric structure. Do not default every song to the same duration. "
+                "Schema: "
+                '{"title":"short original song title","caption":"English ACE-Step style prompt","lyrics":"structured lyrics",'
+                '"vocal_language":"ru|en|uk|de|es|fr|it|pt|pl|tr|zh|ja",'
+                '"duration":240,"bpm":90,"keyscale":"A minor","timesignature":"4"}. '
+                "For an instrumental request return lyrics exactly as [Instrumental]."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Task type: {task_type}\n"
+                f"Instrumental: {instrumental}\n"
+                f"Preferred lyric language: {normalize_response_language(response_language)}\n"
+                f"User request: {user_prompt}"
+            ),
+        },
+    ]
+    try:
+        raw = await asyncio.wait_for(
+            complete_llm(history, MUSIC_PLANNER_MODEL),
+            timeout=MUSIC_PLANNER_TIMEOUT_SECONDS,
+        )
+        plan = parse_music_plan(raw, user_prompt, response_language, task_type, instrumental)
+        print(f"[music-planner] prepared JSON: {json.dumps(plan, ensure_ascii=False)}")
+        return plan
+    except Exception as exc:
+        print(f"[music-planner] local LLM failed, using fallback: {exc}")
+        plan = parse_music_plan("", user_prompt, response_language, task_type, instrumental)
+        print(f"[music-planner] fallback JSON: {json.dumps(plan, ensure_ascii=False)}")
+        return plan
+
+
+music_service.planner = plan_music_generation
+
+
 async def complete_llm_stage(
     history: List[Dict[str, Any]],
     model: str,
@@ -1628,6 +1774,118 @@ async def transcribe_audio(file: UploadFile = File(...)):
                 Path(temp_path).unlink(missing_ok=True)
             except Exception:
                 pass
+
+
+async def stream_music_job_events(job_id: str, chat_id: Optional[int] = None):
+    previous = ""
+    while True:
+        job = music_service.jobs.get(job_id)
+        if not isinstance(job, dict):
+            yield sse_event({"type": "error", "error": "Music generation job not found"})
+            break
+        snapshot = music_service.snapshot(job)
+        serialized = json.dumps(snapshot, ensure_ascii=True, sort_keys=True)
+        if serialized != previous:
+            yield sse_event({"type": "music_generation", "music_generation": snapshot})
+            previous = serialized
+        if snapshot.get("status") in {"completed", "failed"}:
+            break
+        await asyncio.sleep(0.8)
+    if chat_id is not None:
+        yield sse_event({"type": "done", "chat_id": chat_id, "title": state["chats"].get(chat_key(chat_id))})
+    yield "data: [DONE]\n\n"
+
+
+@app.post("/music/uploads", response_model=UploadResponse)
+async def upload_music_source(file: UploadFile = File(...)):
+    is_audio = bool(file.content_type and file.content_type.startswith("audio/"))
+    extension = Path(file.filename or "track.wav").suffix.lower()
+    if not is_audio and extension not in SUPPORTED_AUDIO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Only audio files are allowed")
+    url = await music_service.save_upload(file.filename or "track.wav", await file.read())
+    return UploadResponse(url=url)
+
+
+@app.get("/music/health")
+async def music_generation_health():
+    return await music_service.health()
+
+
+@app.post("/music/generate")
+async def generate_music(request: MusicGenerationRequest):
+    return await music_service.create_job(request)
+
+
+@app.post("/music/cover")
+async def generate_music_cover(request: MusicGenerationRequest):
+    return await music_service.create_job(request.model_copy(update={"task_type": "cover"}))
+
+
+@app.get("/music/jobs/{job_id}")
+async def get_music_job(job_id: str):
+    job = music_service.jobs.get(job_id)
+    if not isinstance(job, dict):
+        raise HTTPException(status_code=404, detail="Music generation job not found")
+    return music_service.snapshot(job)
+
+
+@app.get("/music/jobs/{job_id}/stream")
+async def stream_music_job(job_id: str):
+    if job_id not in music_service.jobs:
+        raise HTTPException(status_code=404, detail="Music generation job not found")
+    return StreamingResponse(
+        stream_music_job_events(job_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/music/jobs/{job_id}/audio/{index}")
+async def get_music_audio(job_id: str, index: int):
+    content, content_type, filename = await music_service.audio_bytes(job_id, index)
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@app.get("/music/jobs/{job_id}/lyrics/current")
+async def get_current_music_lyric(job_id: str, position_seconds: float = 0.0):
+    job = music_service.jobs.get(job_id)
+    if not isinstance(job, dict):
+        raise HTTPException(status_code=404, detail="Music generation job not found")
+    timeline = job.get("lyrics_timeline") or []
+    return {
+        "position_seconds": max(0.0, position_seconds),
+        "current_line": current_lyrics_line(timeline, max(0.0, position_seconds)),
+        "timeline": timeline,
+    }
+
+
+@app.get("/music/library")
+async def get_music_library():
+    return music_service.library_snapshot()
+
+
+@app.get("/music/library/{track_id}")
+async def get_music_library_track(track_id: str):
+    return music_service.library_track(track_id)
+
+
+@app.post("/music/library/{track_id}/regenerate")
+async def regenerate_music_library_track(track_id: str):
+    return await music_service.regenerate_track(track_id)
+
+
+@app.get("/music/library/{track_id}/audio")
+async def get_music_library_audio(track_id: str):
+    content, content_type, filename = await music_service.library_audio_bytes(track_id)
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 def is_image_generation_request(message: str) -> bool:
@@ -1949,8 +2207,8 @@ async def plan_image_generation(
         return fallback_image_plan(user_prompt, previous_job)
 
 
-async def unload_loaded_llms_before_flux() -> None:
-    if not UNLOAD_LLM_BEFORE_FLUX:
+async def unload_loaded_llms(reason: str) -> None:
+    if not UNLOAD_LLM_BEFORE_HEAVY_WORKER:
         return
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
@@ -1978,9 +2236,20 @@ async def unload_loaded_llms_before_flux() -> None:
                     raise RuntimeError(
                         f"LM Studio unload HTTP {unload_response.status_code}: {unload_response.text[:400]}"
                     )
-                print(f"[image-job] unloaded LM Studio instance={instance_id} before FLUX")
+                print(f"[resources] unloaded LM Studio instance={instance_id} before {reason}")
     except Exception as exc:
-        print(f"[image-job] LM Studio unload skipped: {exc}")
+        print(f"[resources] LM Studio unload skipped before {reason}: {exc}")
+
+
+async def unload_loaded_llms_before_flux() -> None:
+    await unload_loaded_llms("FLUX")
+
+
+async def unload_loaded_llms_before_music() -> None:
+    await unload_loaded_llms("ACE-Step")
+
+
+music_service.before_synthesis = unload_loaded_llms_before_music
 
 
 def choose_reference_url(
@@ -2532,42 +2801,159 @@ async def image_generation_health():
         ) from exc
 
 
+def local_worker_port(worker_url: str) -> Optional[int]:
+    parsed = urlparse(worker_url)
+    if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return None
+    return parsed.port
+
+
+async def try_start_local_worker(worker_url: str, launcher_name: str) -> bool:
+    port = local_worker_port(worker_url)
+    launcher = Path(__file__).resolve().parent.parent / launcher_name
+    if os.name != "nt" or port is None or not launcher.exists():
+        return False
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    subprocess.Popen(
+        ["cmd.exe", "/c", str(launcher)],
+        cwd=str(launcher.parent),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+    for _ in range(90):
+        await asyncio.sleep(0.5)
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(f"{worker_url}/health")
+            if response.status_code < 400:
+                return True
+        except httpx.RequestError:
+            continue
+    return False
+
+
+async def ensure_image_worker_available() -> None:
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            response = await client.get(f"{IMAGE_WORKER_URL}/health")
+        if response.status_code < 400:
+            return
+    except httpx.RequestError:
+        pass
+    if not await try_start_local_worker(IMAGE_WORKER_URL, "run_flux_worker.bat"):
+        raise RuntimeError("FLUX image worker is unavailable and could not be started automatically.")
+
+
+async def release_local_worker_memory(worker_url: str) -> None:
+    if os.getenv("NEURO_KEEP_HEAVY_WORKERS", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    port = local_worker_port(worker_url)
+    stop_script = Path(__file__).resolve().parent / "stop_local_port_process.ps1"
+    if os.name != "nt" or port is None or not stop_script.exists():
+        return
+
+    def stop_worker() -> None:
+        subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(stop_script),
+                "-Port",
+                str(port),
+            ],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=12,
+        )
+
+    await asyncio.to_thread(stop_worker)
+
+
 @app.post("/images/generate", response_model=ImageGenerationResponse)
 async def generate_image(request: ImageGenerationRequest):
-    try:
-        async with httpx.AsyncClient(timeout=None) as client:
-            response = await client.post(
-                f"{IMAGE_WORKER_URL}/generate",
-                json=request.model_dump(),
+    async with image_worker_request_lock:
+        try:
+            await ensure_image_worker_available()
+            async with httpx.AsyncClient(timeout=None) as client:
+                response = await client.post(
+                    f"{IMAGE_WORKER_URL}/generate",
+                    json=request.model_dump(),
+                )
+            if response.status_code >= 400:
+                try:
+                    detail = response.json().get("detail", response.text)
+                except Exception:
+                    detail = response.text
+                raise HTTPException(status_code=response.status_code, detail=detail)
+            result = response.json()
+            return ImageGenerationResponse(
+                url=f"{PUBLIC_SERVER_URL}/generated/{result['file_name']}",
+                seed=int(result["seed"]),
+                width=int(result["width"]),
+                height=int(result["height"]),
+                steps=int(result["steps"]),
+                elapsed_seconds=float(result["elapsed_seconds"]),
+                reference_used=bool(result.get("reference_used")),
+                reference_count=int(result.get("reference_count") or 0),
             )
-        if response.status_code >= 400:
-            try:
-                detail = response.json().get("detail", response.text)
-            except Exception:
-                detail = response.text
-            raise HTTPException(status_code=response.status_code, detail=detail)
-        result = response.json()
-        return ImageGenerationResponse(
-            url=f"{PUBLIC_SERVER_URL}/generated/{result['file_name']}",
-            seed=int(result["seed"]),
-            width=int(result["width"]),
-            height=int(result["height"]),
-            steps=int(result["steps"]),
-            elapsed_seconds=float(result["elapsed_seconds"]),
-            reference_used=bool(result.get("reference_used")),
-            reference_count=int(result.get("reference_count") or 0),
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Cannot reach the FLUX image worker. "
+                    "Run setup_flux_klein.bat once, then run_flux_worker.bat. "
+                    f"Details: {exc}"
+                ),
+            ) from exc
+        finally:
+            await release_local_worker_memory(IMAGE_WORKER_URL)
+
+
+async def generate_music_artwork(track: Dict[str, Any]) -> Optional[str]:
+    await unload_loaded_llms_before_flux()
+    title = str(track.get("title") or "Original song")
+    style = str(track.get("caption") or "")
+    art_direction = secrets.choice(
+        (
+            "an intimate documentary moment with an unexpected focal subject",
+            "a cinematic wide shot with layered depth and atmospheric perspective",
+            "a refined close-up still life with tactile details and dramatic shadows",
+            "an expressive editorial portrait-like composition without visible text",
+            "a dreamlike but photoreal scene with strong color contrast and negative space",
         )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Cannot reach the FLUX image worker. "
-                "Run setup_flux_klein.bat once, then run_flux_worker.bat. "
-                f"Details: {exc}"
-            ),
-        ) from exc
+    )
+    prompt = (
+        f"Square album cover artwork for an original song titled '{title}'. "
+        f"Visual mood inspired by this production brief: {style}. "
+        f"Create a fresh visual interpretation using {art_direction}. "
+        "Keep the emotional theme coherent while varying the subject, camera angle and composition. "
+        "Cinematic editorial photography, expressive lighting, refined composition, "
+        "no text, no logos, no watermark, premium streaming-service artwork."
+    )
+    result = await generate_image(
+        ImageGenerationRequest(
+            prompt=prompt[:24000],
+            width=768,
+            height=768,
+            steps=8,
+            guidance_scale=1.0,
+            seed=secrets.randbelow(2**31 - 1),
+        )
+    )
+    return result.url
+
+
+music_service.cover_generator = generate_music_artwork
 
 
 @app.get("/images/jobs/{job_id}", response_model=ImageJobResponse)
@@ -2737,6 +3123,7 @@ async def get_messages(chat_id: int):
                 if msg.get("image_job_id") in state.setdefault("image_jobs", {})
                 else None
             ),
+            music_generation=music_service.job_snapshot(str(msg.get("music_job_id") or "")),
         )
         for msg in state["messages"].get(key, [])
     ]
@@ -2764,6 +3151,23 @@ async def chat_stream(request: ChatRequest):
         job = await create_image_job(chat_id, request.message, image_plan, request.response_language)
         return StreamingResponse(
             stream_image_job(job),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    if is_music_generation_request(request.message):
+        job = await music_service.create_job(
+            MusicGenerationRequest(
+                user_prompt=request.message,
+                response_language=request.response_language,
+            )
+        )
+        await append_music_job_message(chat_id, str(job["id"]))
+        return StreamingResponse(
+            stream_music_job_events(str(job["id"]), chat_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -2851,6 +3255,7 @@ async def root():
         "message": "Neuro Local Server is running",
         "phone_url": PUBLIC_SERVER_URL,
         "phone_setup_urls": phone_setup_urls(),
+        "music_worker_url": MUSIC_WORKER_URL,
     }
 
 
@@ -2862,6 +3267,7 @@ async def config():
         "context_tokens": CONTEXT_TOKENS,
         "server_port": SERVER_PORT,
         "phone_setup_urls": phone_setup_urls(),
+        "music_worker_url": MUSIC_WORKER_URL,
     }
 
 

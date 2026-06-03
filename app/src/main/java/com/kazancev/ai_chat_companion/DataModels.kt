@@ -123,7 +123,9 @@ data class StreamedAiResponse(
     @SerialName("memory_updated")
     val memoryUpdated: String? = null,
     @SerialName("image_generation")
-    val imageGeneration: ImageGenerationInfo? = null
+    val imageGeneration: ImageGenerationInfo? = null,
+    @SerialName("music_generation")
+    val musicGeneration: MusicJob? = null
 )
 
 @Serializable
@@ -152,7 +154,9 @@ data class ServerMessage(
     val content: String,
     val images: List<String> = emptyList(),
     @SerialName("image_generation")
-    val imageGeneration: ImageGenerationInfo? = null
+    val imageGeneration: ImageGenerationInfo? = null,
+    @SerialName("music_generation")
+    val musicGeneration: MusicJob? = null
 )
 
 @Serializable
@@ -228,4 +232,72 @@ data class SavedMemory(
     val text: String,
     @SerialName("created_at")
     val createdAt: Long
+)
+
+@Serializable
+data class MusicGenerationRequest(
+    @SerialName("user_prompt")
+    val userPrompt: String,
+    @SerialName("task_type")
+    val taskType: String = "text2music",
+    @SerialName("source_audio_url")
+    val sourceAudioUrl: String? = null,
+    val caption: String? = null,
+    val lyrics: String? = null,
+    val duration: Float? = null,
+    val instrumental: Boolean = false,
+    @SerialName("inference_steps")
+    val inferenceSteps: Int = 8,
+    @SerialName("response_language")
+    val responseLanguage: String = "ru"
+)
+
+@Serializable
+data class LyricsLine(
+    val section: String = "",
+    val text: String,
+    @SerialName("start_seconds")
+    val startSeconds: Float = 0f,
+    @SerialName("end_seconds")
+    val endSeconds: Float = 0f,
+    @SerialName("timing_source")
+    val timingSource: String = "estimated"
+)
+
+@Serializable
+data class MusicTrack(
+    val id: String,
+    @SerialName("job_id")
+    val jobId: String = "",
+    val title: String = "Neuro Track",
+    val caption: String = "",
+    val lyrics: String = "",
+    @SerialName("lyrics_timeline")
+    val lyricsTimeline: List<LyricsLine> = emptyList(),
+    val duration: Float = 0f,
+    val bpm: Int? = null,
+    val keyscale: String = "",
+    @SerialName("task_type")
+    val taskType: String = "text2music",
+    @SerialName("audio_url")
+    val audioUrl: String,
+    @SerialName("cover_url")
+    val coverUrl: String? = null,
+    @SerialName("created_at")
+    val createdAt: Long = 0
+)
+
+@Serializable
+data class MusicJob(
+    val id: String,
+    val status: String = "queued",
+    val stage: String = "queued",
+    val progress: Float = 0f,
+    val title: String? = null,
+    val caption: String = "",
+    val lyrics: String = "",
+    @SerialName("lyrics_timeline")
+    val lyricsTimeline: List<LyricsLine> = emptyList(),
+    val tracks: List<MusicTrack> = emptyList(),
+    val error: String? = null
 )

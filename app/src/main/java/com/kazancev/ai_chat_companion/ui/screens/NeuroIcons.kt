@@ -252,6 +252,24 @@ object NeuroIcons {
         lineTo(15.4f, 21f)
     }
 
+    val Music = lineIcon("NeuroMusic") {
+        moveTo(9f, 17.5f)
+        curveTo(9f, 19.2f, 7.6f, 20.5f, 5.9f, 20.5f)
+        curveTo(4.2f, 20.5f, 3f, 19.4f, 3f, 17.9f)
+        curveTo(3f, 16.3f, 4.3f, 15.1f, 6f, 15.1f)
+        curveTo(7.2f, 15.1f, 8.2f, 15.5f, 9f, 16.2f)
+        lineTo(9f, 6.2f)
+        lineTo(19f, 4f)
+        lineTo(19f, 15.3f)
+        moveTo(19f, 15.3f)
+        curveTo(18.2f, 14.6f, 17.2f, 14.2f, 16f, 14.2f)
+        curveTo(14.3f, 14.2f, 13f, 15.4f, 13f, 17f)
+        curveTo(13f, 18.5f, 14.2f, 19.6f, 15.9f, 19.6f)
+        curveTo(17.6f, 19.6f, 19f, 18.3f, 19f, 16.6f)
+        moveTo(9f, 9f)
+        lineTo(19f, 6.8f)
+    }
+
     val More = lineIcon("NeuroMore", stroke = 3f) {
         dot(6.5f, 12f)
         dot(12f, 12f)

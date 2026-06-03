@@ -9,6 +9,8 @@ run_server.local.bat
 captures/
 .externalNativeBuild/
 .cxx/
+.android-studio-cache-backup/
+.android-studio-system/
 *.apk
 *.aab
 
@@ -19,11 +21,17 @@ __pycache__/
 .venv/
 server/.venv/
 server/.image_venv/
+server/.music_bootstrap_venv/
+server/.local_storage/
+server/vendors/
 
 # Local Neuro state and generated assets
 server/storage*.json
 server/uploads/
 server/generated/
+server/music_uploads/
+server/music_generated/
+server/music_library*.json
 server/models/
 server/.cache/
 server/flux_klein_model_info.json

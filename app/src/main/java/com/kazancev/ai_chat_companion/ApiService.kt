@@ -69,7 +69,8 @@ private data class AiRoute(
 )
 
 @OptIn(ExperimentalSerializationApi::class)
-class ApiService(private val context: Context) {
+class ApiService(val appContext: Context) {
+    private val context = appContext
     private val serverCandidates = listOf(
         BuildConfig.NEURO_SERVER_URL,
         "http://10.0.2.2:3510",
@@ -339,6 +340,57 @@ class ApiService(private val context: Context) {
 
     suspend fun getImageGenerationJob(jobId: String): Result<ImageGenerationInfo> {
         return runRequest { baseUrl -> client.get("$baseUrl/images/jobs/$jobId").body() }
+    }
+
+    suspend fun getMusicLibrary(): Result<List<MusicTrack>> {
+        return runRequest { baseUrl -> client.get("$baseUrl/music/library").body() }
+    }
+
+    suspend fun getMusicTrack(trackId: String): Result<MusicTrack> {
+        return runRequest { baseUrl -> client.get("$baseUrl/music/library/$trackId").body() }
+    }
+
+    suspend fun createMusic(request: MusicGenerationRequest): Result<MusicJob> {
+        return runRequest { baseUrl ->
+            client.post("$baseUrl/music/${if (request.taskType == "cover") "cover" else "generate"}") {
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }.body()
+        }
+    }
+
+    suspend fun regenerateMusic(trackId: String): Result<MusicJob> {
+        return runRequest { baseUrl ->
+            client.post("$baseUrl/music/library/$trackId/regenerate").body()
+        }
+    }
+
+    suspend fun getMusicJob(jobId: String): Result<MusicJob> {
+        return runRequest { baseUrl -> client.get("$baseUrl/music/jobs/$jobId").body() }
+    }
+
+    suspend fun uploadMusicSource(uri: Uri): Result<String> {
+        return runCatching {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: error("Cannot read audio file")
+            val mime = context.contentResolver.getType(uri) ?: "audio/mpeg"
+            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "cover.mp3"
+            runRequest { baseUrl ->
+                client.submitFormWithBinaryData(
+                    url = "$baseUrl/music/uploads",
+                    formData = formData {
+                        append(
+                            "file",
+                            bytes,
+                            headersOf(
+                                "Content-Disposition" to listOf("form-data; name=\"file\"; filename=\"$fileName\""),
+                                "Content-Type" to listOf(mime)
+                            )
+                        )
+                    }
+                ).body<UploadResponse>()
+            }.getOrThrow().url
+        }
     }
 
     suspend fun getPersonalization(): Result<PersonalizationSettings> {

@@ -11,7 +11,8 @@ data class ChatMessage(
     val isThinking: Boolean = false,
     val thinkingStartedAt: Long? = null,
     val thinkingFinishedAt: Long? = null,
-    val imageGeneration: ImageGenerationInfo? = null
+    val imageGeneration: ImageGenerationInfo? = null,
+    val musicGeneration: MusicJob? = null
 )
 
 enum class Author {

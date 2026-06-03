@@ -2,3 +2,5 @@
 rem Copy this file to run_server.local.bat and adjust addresses for your PC.
 set LLM_BASE_URL=http://127.0.0.1:1234/v1
 set PUBLIC_SERVER_URL=http://192.168.1.10:3510
+rem Optional: fall back to the built-in music plan if LM Studio stalls.
+set MUSIC_PLANNER_TIMEOUT_SECONDS=90

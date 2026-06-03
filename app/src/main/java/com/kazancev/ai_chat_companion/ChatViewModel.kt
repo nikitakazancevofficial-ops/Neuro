@@ -90,6 +90,7 @@ class ChatViewModel(private val apiService: ApiService) : ViewModel() {
                             reasoning = parsed.reasoning,
                             author = Author.AI,
                             imageGeneration = serverMsg.imageGeneration,
+                            musicGeneration = serverMsg.musicGeneration,
                             thinkingStartedAt = serverMsg.imageGeneration?.startedAt?.times(1000),
                             thinkingFinishedAt = serverMsg.imageGeneration?.completedAt?.times(1000)
                         )
@@ -236,6 +237,7 @@ class ChatViewModel(private val apiService: ApiService) : ViewModel() {
             var streamedReasoning = ""
             var memoryUpdated: String? = null
             var imageGeneration: ImageGenerationInfo? = null
+            var musicGeneration: MusicJob? = null
             var thinkingFinishedAt: Long? = null
             var streamFinished = false
 
@@ -252,7 +254,8 @@ class ChatViewModel(private val apiService: ApiService) : ViewModel() {
                     isThinking = isThinking,
                     thinkingStartedAt = startedAt,
                     thinkingFinishedAt = thinkingFinishedAt,
-                    imageGeneration = imageGeneration
+                    imageGeneration = imageGeneration,
+                    musicGeneration = musicGeneration
                 )
             }
 
@@ -280,6 +283,11 @@ class ChatViewModel(private val apiService: ApiService) : ViewModel() {
                             thinkingFinishedAt = thinkingFinishedAt ?: System.currentTimeMillis()
                             pushAssistant(isThinking = false, isStreaming = false)
                             event.imageGeneration?.let(::startImagePolling)
+                        }
+                        "music_generation" -> {
+                            musicGeneration = event.musicGeneration
+                            thinkingFinishedAt = thinkingFinishedAt ?: System.currentTimeMillis()
+                            pushAssistant(isThinking = false, isStreaming = event.musicGeneration?.status !in setOf("completed", "failed"))
                         }
                         "done" -> {
                             thinkingFinishedAt = thinkingFinishedAt ?: System.currentTimeMillis()
@@ -421,7 +429,8 @@ class ChatViewModel(private val apiService: ApiService) : ViewModel() {
         isThinking: Boolean,
         thinkingStartedAt: Long?,
         thinkingFinishedAt: Long?,
-        imageGeneration: ImageGenerationInfo? = null
+        imageGeneration: ImageGenerationInfo? = null,
+        musicGeneration: MusicJob? = null
     ) {
         val parsed = parseAssistantText(visible)
         val combinedReasoning = listOf(reasoning, parsed.reasoning)
@@ -441,7 +450,8 @@ class ChatViewModel(private val apiService: ApiService) : ViewModel() {
                 isThinking = isThinking || (parsed.visible.isBlank() && isStreaming),
                 thinkingStartedAt = thinkingStartedAt,
                 thinkingFinishedAt = thinkingFinishedAt,
-                imageGeneration = imageGeneration
+                imageGeneration = imageGeneration,
+                musicGeneration = musicGeneration
             )
 
             if (lastAssistantIndex >= 0) mutable[lastAssistantIndex] = updated else mutable.add(updated)
